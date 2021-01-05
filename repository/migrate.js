@@ -36,7 +36,7 @@ class Migrator {
         PRIMARY KEY (id),
         UNIQUE (name)
       );`);
-    return result.rowCount;
+    return result.length;
   }
 }
 
