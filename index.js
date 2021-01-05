@@ -105,23 +105,23 @@ const alice = new Consumer("alice", { eventRepository, consumerRepository });
 const exp = new ExponentialBackoff();
 let johnLastRun = Date.now();
 
+// Avoid hammering the database when there are no events.
+// We can optionally reset the timer through pg.notify callback.
 const backgroundTask1 = cron.schedule("* * * * * *", async () => {
-  console.log("running a task every second", exp);
+  console.log("running a task every second");
   if (exp.attempts > 0 && Date.now() < exp.duration() + johnLastRun) {
     exp.increment();
-    console.log("increment");
     return;
   }
-  console.log("running john");
+  console.log("executing consumer john");
   const hasEvents = await john.run();
+  hasEvents ? exp.reset() : exp.increment();
   johnLastRun = Date.now();
-  if (hasEvents) {
-    exp.reset();
-  } else {
-    exp.increment();
-  }
 });
 
+// Note that having consumers processing payload at different speed will cause
+// the events to accumulate. In the worst case scenario, if one of the consumer
+// is not running, past events would never be deleted.
 const backgroundTask2 = cron.schedule("*/5 * * * * *", () => {
   console.log("running a task every 5 seconds");
   alice.run();
