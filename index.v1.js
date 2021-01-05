@@ -1,18 +1,18 @@
 // This example demonstrates the basics of pg listen/notify.
-import client from "./db.js";
+import db from "./db.js";
 
 console.log("Listen for all pg_notify channel messages");
-client.on("notification", ({ channel, payload }) => {
+db.on("notification", ({ channel, payload }) => {
   const message = JSON.parse(payload);
   console.log("received notification:", channel);
   console.log("message:", message);
 });
 
 console.log("Subscribe to notification");
-await client.query("LISTEN user_created");
+await db.query("LISTEN user_created");
 
 console.log("Performing query");
-await client.query(`
+await db.query(`
   WITH sum AS (
     SELECT 1 + 1 AS total
   )
@@ -20,5 +20,5 @@ await client.query(`
 `);
 
 setTimeout(() => {
-  client.end();
+  db.end();
 }, 10_000);
