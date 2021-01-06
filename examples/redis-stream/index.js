@@ -8,7 +8,7 @@ import createUser from "./user-store.js";
 import EventStore from "./event-store.js";
 import ConsumerStore from "./consumer-store.js";
 
-const STREAM_KEY = "event:person_created";
+const STREAM_KEY = "mystream"; // TODO: Use $ to indicate stream?
 
 await migrate(db);
 
