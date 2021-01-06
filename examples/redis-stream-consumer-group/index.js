@@ -77,7 +77,8 @@ async function sendEventToRedisStream() {
   for (let event of events) {
     try {
       // MAXLEN ~ 1,000,000 caps the stream at roughly that number, so that it
-      // doesn't grow in an unbounded way.
+      // doesn't grow in an unbounded way. We might not need this if the stream 
+      // is truncated after ack.
       const redisId = await redis.xadd(
         STREAM_KEY, // Stream key.
         "MAXLEN",
