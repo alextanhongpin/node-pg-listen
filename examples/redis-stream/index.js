@@ -1,4 +1,4 @@
-// This example demonstrates handling events for multiple consumers.
+// This example demonstrates sending the events to redis-stream and handling with a single consumer.
 
 import cron from "node-cron";
 import Redis from "ioredis";
@@ -9,8 +9,6 @@ import EventStore from "./event-store.js";
 import ConsumerStore from "./consumer-store.js";
 
 const STREAM_KEY = "event:person_created";
-const APPLICATION_ID = "node:1";
-const CONSUMER_ID = "consumer:1";
 
 await migrate(db);
 
