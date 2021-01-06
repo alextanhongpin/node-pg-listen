@@ -46,7 +46,7 @@ async function redisConsumerGroup(consumerKey) {
     if (!streams) return;
     streams.forEach(stream => {
       const [streamName, records] = stream;
-      records.forEach(record => {
+      records.forEach(async record => {
         const [redisId, fields] = record;
         const event = {};
         for (let i = 0; i < fields.length; i += 2) {
@@ -59,6 +59,10 @@ async function redisConsumerGroup(consumerKey) {
         event.id = BigInt(event.id);
         // Do work...
         console.log(consumerKey, "performing work", { event, redisId });
+
+        // Acknowledge.
+        const ack = await redis.xack(STREAM_KEY, GROUP_KEY, redisId);
+        console.log(ack);
       });
     });
   } catch (error) {
