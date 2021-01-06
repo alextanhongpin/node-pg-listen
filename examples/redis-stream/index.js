@@ -13,7 +13,10 @@ const APPLICATION_ID = "node:1";
 const CONSUMER_ID = "consumer:1";
 
 await migrate(db);
+
 const redis = new Redis();
+await redis.flushall();
+
 const eventStore = new EventStore(db);
 const consumerStore = new ConsumerStore(db);
 
@@ -48,7 +51,7 @@ async function redisConsumerGroup() {
         event[fields[i]] = fields[i + 1];
       }
       event.id = BigInt(event.id);
-      if (event.id < lastEventId) {
+      if (event.id <= lastEventId) {
         console.log("skipping", lastEventId, event.id);
         return;
       }
@@ -98,4 +101,4 @@ setTimeout(() => {
   consumeRedis.stop();
   redis.end();
   db.end();
-}, 10_000);
+}, 15_000);
