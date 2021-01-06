@@ -1,4 +1,4 @@
-export default class ConsumerRepository {
+export default class ConsumerStore {
   constructor(db) {
     this.db = db;
   }
@@ -11,12 +11,13 @@ export default class ConsumerRepository {
     `;
     const values = [name];
     const result = await this.db.query(statement, values);
-    const consumer = result.rows?.[0];
-    consumer.checkpoint = BigInt(consumer.checkpoint);
+    const consumer = result.rows[0];
+    if (!consumer) return null;
+    consumer.last_event_id = BigInt(consumer.last_event_id);
     return consumer;
   }
 
-  async updateLastCheckpoint(name, checkpoint = 0) {
+  async updateLastCheckpoint(name, lastEventId, lastRedisId) {
     try {
       await this.db.query("BEGIN");
       await this.db.query("SELECT * FROM consumer WHERE name = $1 FOR UPDATE", [
@@ -25,10 +26,11 @@ export default class ConsumerRepository {
 
       const statement = `
         UPDATE consumer 
-        SET checkpoint = $1
-        WHERE name = $2
+        SET last_event_id = $1,
+            last_redis_id = $2
+        WHERE name = $3
     `;
-      const values = [checkpoint, name];
+      const values = [lastEventId, lastRedisId, name];
       const result = await this.db.query(statement, values);
 
       await this.db.query("COMMIT");
@@ -37,15 +39,5 @@ export default class ConsumerRepository {
       await this.db.query("ROLLBACK");
       throw error;
     }
-  }
-
-  async minCheckpoint() {
-    const statement = `
-      SELECT min(checkpoint) AS checkpoint
-      FROM consumer
-    `;
-    const result = await this.db.query(statement);
-    const checkpoint = BigInt(result.rows?.[0].checkpoint);
-    return checkpoint;
   }
 }

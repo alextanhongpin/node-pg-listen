@@ -1,5 +1,6 @@
 // This example demonstrates the basics of pg listen/notify.
-import db from "./db.js";
+
+import db from "../../db.js";
 
 console.log("Listen for all pg_notify channel messages");
 db.on("notification", ({ channel, payload }) => {
