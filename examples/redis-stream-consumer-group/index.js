@@ -76,9 +76,13 @@ async function sendEventToRedisStream() {
   let lastEventId = 0;
   for (let event of events) {
     try {
-      // The returned value is a boolean, not a redis id...
+      // MAXLEN ~ 1,000,000 caps the stream at roughly that number, so that it
+      // doesn't grow in an unbounded way.
       const redisId = await redis.xadd(
         STREAM_KEY, // Stream key.
+        "MAXLEN",
+        "~",
+        1_000_000,
         "*", // Auto-generate stream id.
         "id",
         event.id,

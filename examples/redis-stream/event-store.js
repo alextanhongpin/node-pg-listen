@@ -7,6 +7,7 @@ export default class EventStore {
     const statement = `
       SELECT *
       FROM event
+      ORDER BY id
       LIMIT $1
     `;
     const values = [limit];
