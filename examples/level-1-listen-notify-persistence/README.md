@@ -254,3 +254,11 @@ sendWelcomeEmail(event) // <- will this execute if the above failed?
 
 queue.shift()
 ```
+
+
+Of course we can cache the steps in between, but caching introduce a few problems:
+- how long to cache the intermediate steps?
+- caching increases storage
+
+As opposed to:
+- process the event, then delete them (reduces storage)
