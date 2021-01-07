@@ -15,8 +15,6 @@ await migrate(db);
 const redis = new Redis();
 await redis.flushall();
 
-const eventStore = new EventStore(db);
-
 // Create consumer group.
 try {
   await redis.xgroup("CREATE", STREAM_KEY, GROUP_KEY, "$", "MKSTREAM");
@@ -63,7 +61,7 @@ function createConsumer(consumerKey) {
       }
       const [streamName, records] = streams[0];
       checkBacklog = !(records.length === 0);
-      console.log("received from stream", { streamName });
+      console.log("Processing stream", streamName);
       records.forEach(async record => {
         const [redisId, fields] = record;
         const event = {};
@@ -89,35 +87,43 @@ function createConsumer(consumerKey) {
 }
 
 async function sendEventToRedisStream() {
-  // TODO: Wrap this in transaction?
-  const events = await eventStore.findAll();
-  let lastEventId = 0;
-  for (let event of events) {
-    try {
-      // MAXLEN ~ 1,000,000 caps the stream at roughly that number, so that it
-      // doesn't grow in an unbounded way. We might not need this if the stream
-      // is truncated after ack.
-      const redisId = await redis.xadd(
-        STREAM_KEY, // Stream key.
-        "MAXLEN",
-        "~",
-        1_000_000,
-        "*", // Auto-generate stream id.
-        "id",
-        event.id,
-        "object",
-        event.object,
-        "data",
-        JSON.stringify(event.data)
-      );
-      console.log("added to stream", { redisId, eventId: event.id });
-      lastEventId = event.id;
-    } catch (error) {
-      console.log(error);
-      break;
+  // Wrap in transaction to prevent same reads...
+  try {
+    await db.query("BEGIN");
+    const eventStore = new EventStore(db);
+    const events = await eventStore.findAll();
+
+    let lastEventId = 0;
+    for (let event of events) {
+      try {
+        // MAXLEN ~ 1,000,000 caps the stream at roughly that number, so that it
+        // doesn't grow in an unbounded way. We might not need this if the stream
+        // is truncated after ack.
+        const redisId = await redis.xadd(
+          STREAM_KEY, // Stream key.
+          "MAXLEN",
+          "~",
+          1_000_000,
+          "*", // Auto-generate stream id.
+          "id",
+          event.id,
+          "object",
+          event.object,
+          "data",
+          JSON.stringify(event.data)
+        );
+        console.log("added to stream", { redisId, eventId: event.id });
+        lastEventId = event.id;
+      } catch (error) {
+        console.log(error);
+        break;
+      }
     }
+    await eventStore.truncate(lastEventId);
+    await db.query("COMMIT");
+  } catch (error) {
+    await db.query("ROLLBACK");
   }
-  await eventStore.truncate(lastEventId);
 }
 
 createUser(db);
