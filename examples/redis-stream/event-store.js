@@ -4,11 +4,15 @@ export default class EventStore {
   }
 
   async findAll(limit = 10_000) {
+    // Selecting for update blocks another 'SELECT .. FROM UPDATE',
+    // so they will never get the same paginated result when running
+    // concurrently.
     const statement = `
       SELECT *
       FROM event
       ORDER BY id
       LIMIT $1
+      FOR UPDATE
     `;
     const values = [limit];
     const result = await this.db.query(statement, values);

@@ -4,7 +4,7 @@ import cron from "node-cron";
 import Redis from "ioredis";
 import db from "../../db.js";
 import migrate from "./migrate.js";
-import createUser from "./user-store.js";
+import createUsers from "../../user-store.js";
 import EventStore from "./event-store.js";
 import ConsumerStore from "./consumer-store.js";
 
@@ -91,7 +91,7 @@ async function sendEventToRedisStream() {
   await eventStore.truncate(lastEventId);
 }
 
-createUser(db);
+createUsers(db);
 
 setTimeout(() => {
   // End background tasks before terminating the database connection.
