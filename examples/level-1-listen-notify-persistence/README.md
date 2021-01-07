@@ -231,4 +231,26 @@ Say when the user registers for a new account, and we want to perform the follow
 1. Send welcome email
 2. Send confirmation email
 
-In other words, we have two event handlers for a single event. Keeping them idempotent and ensuring one-time delivery is tricky in this situation. In this case, we should actually split it into two events, `WelcomeEmailRequestedEvent`, `ConfirmationEmailRequestedEvent`. This will ensure there's only 1:1 mapping of event to event handlers, and providing more clarity on how the events should be used. 
+In other words, we have two event handlers for a single event. Keeping them idempotent and ensuring one-time delivery is tricky in this situation. In this case, we should actually split it into two events, `WelcomeEmailRequestedEvent`, `ConfirmationEmailRequestedEvent`. This will ensure there's only 1:1 mapping of event to event handlers, and providing more clarity on how the events should be used.
+
+This idea is similar to having a queue of events, and processing them individually:
+
+```
+queue = [WelcomeEmailRequestedEvent, ConfirmationEmailRequestedEvent]
+
+const event = queue.head()
+process(event) // If this fails, retry.
+queue.shift() // Remove the event
+```
+
+As opposed to this:
+```
+queue = [UserRegisteredEvent]
+
+const event = queue.head()
+
+sendConfirmationEmail(event) // <- will this repeat if the below task failed?
+sendWelcomeEmail(event) // <- will this execute if the above failed? 
+
+queue.shift()
+```
