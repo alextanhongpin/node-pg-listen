@@ -221,3 +221,14 @@ However, it is not as flexible as performing the creation of event in the transa
 2. Triggers are not visible, compared to writing application code.
 3. We now need to maintain triggers (adding, deleting etc) for multiple table
 4. The trigger assumes the event created is tied to the existing table, but it might not always be true. Say if we created an `Order` and wanted to send a user an email, but the event requires data from multiple table, then we will have to query it later, at the risk of data changes. If would be safer to persist all those information as an event to be processed in the first place.
+5. We might one to publish multiple events in a single transaction, if there are more operations involved.
+
+
+## Granularity of events
+
+Say when the user registers for a new account, and we want to perform the following:
+
+1. Send welcome email
+2. Send confirmation email
+
+In other words, we have two event handlers for a single event. Keeping them idempotent and ensuring one-time delivery is tricky in this situation. In this case, we should actually split it into two events, `WelcomeEmailRequestedEvent`, `ConfirmationEmailRequestedEvent`. This will ensure there's only 1:1 mapping of event to event handlers, and providing more clarity on how the events should be used. 
