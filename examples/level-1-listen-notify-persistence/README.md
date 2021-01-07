@@ -299,11 +299,12 @@ queue.shift() # Two tasks needs to completed for removal. What if we have more?
 
 
 Of course we can cache the steps in between, but caching introduce a few problems:
+
 - how long to cache the intermediate steps?
 - in-memory cache does not persist if server restart
 - distributed cache adds another dependency, as well as complexity
 
-It is easier to be more granular with the events, which will be deleted upon completion.
+By creating more granular events, we can also parallelize the processing further.
 
 In other words, the proposed solution would be:
 
@@ -315,10 +316,8 @@ async function register(name, email, password) {
     const user = await createUser(name, email, password)
     
     // Event is persisted in another table. 
-    await createEvents([
-    	WelcomeEmailRequestedEvent.fromUser(user),
-    	ConfirmationEmailRequestedEvent.fromUser(user)
-    ])
+    await createEvent(WelcomeEmailRequestedEvent.fromUser(user))
+    await createEvent(ConfirmationEmailRequestedEvent.fromUser(user))
   
     await db.query('COMMIT')
     
