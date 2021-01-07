@@ -1,8 +1,9 @@
-// This example demonstrates handling events for multiple consumers.
+// This example demonstrates handling events for multiple consumers,
+// done by persisting each consumer state in postgres.
 
 import cron from "node-cron";
 
-import db from "./db.js";
+import db from "../../db.js";
 import migrate from "./repository/migrate.js";
 import Consumer from "./consumer.js";
 import EventRepository from "./repository/event.js";

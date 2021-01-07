@@ -9,6 +9,8 @@ const client = new pg.Client({
   port: process.env.DB_PORT,
   database: process.env.DB_NAME
 });
+
+// Automatically starts the connection. Don't do this in production.
 client.connect();
 // client.end()
 
