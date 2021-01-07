@@ -1,8 +1,9 @@
 // This example demonstrates on handling events for a single consumer.
 
+import cron from "node-cron";
 import db from "../../db.js";
 import migrate from "./migrate.js";
-import cron from "node-cron";
+import createUsers from "../../user-store.js";
 
 // NOTE: Perform migrations. Don't do this in production.
 console.log("migrated", await migrate(db), "tables");
@@ -21,18 +22,27 @@ const backgroundTask = cron.schedule("* * * * * *", () => {
 
 async function batch() {
   console.log("running batch processing");
-  // We don't need to process it in transaction, since we are only working with
-  // past events, unless we are running it in multiple nodes.
-  const { rows: events } = await db.query("SELECT * FROM event LIMIT $1", [
-    1000
-  ]);
-  if (!events.length) return;
-  let lastId = 0;
-  events.forEach(event => {
-    console.log("processing", event);
-    lastId = event.id;
-  });
-  await db.query(`DELETE FROM event WHERE id <= $1`, [lastId]);
+  // Process in transaction to ensure another running query won't process the
+  // same work.
+  try {
+    await db.query("BEGIN");
+    const { rows: events } = await db.query(
+      "SELECT * FROM event LIMIT $1 FOR UPDATE",
+      [1000]
+    );
+    if (!events.length) return;
+    let lastId = 0;
+    events.forEach(event => {
+      console.log("processing", event);
+      lastId = event.id;
+    });
+    await db.query(`DELETE FROM event WHERE id <= $1`, [lastId]);
+
+    await db.query("COMMIT");
+  } catch (error) {
+    await db.query("ROLLBACK");
+    console.log("batchError:", error.message);
+  }
 }
 
 async function stream() {
@@ -42,6 +52,7 @@ async function stream() {
     const count = Number(countResult.rows[0].count);
     if (!count) {
       console.log("no event", count);
+      console.log("sleep");
       return;
     }
     await db.query("BEGIN");
@@ -96,20 +107,7 @@ db.on("notification", async ({ channel, payload }) => {
 
 await db.query("LISTEN person_created");
 
-"abcdefghijklmnopqrstuvwxyz".split("").forEach(name => {
-  // This works as a transaction, if one of the WITH step fails, all of them fails.
-  db.query(
-    `WITH person_created AS (
-      INSERT INTO person(name) VALUES ($1) RETURNING *
-    ),
-    event_created AS (
-      INSERT INTO event (object, event, data) VALUES ('person', 'person_created', (SELECT row_to_json(person_created.*) FROM person_created))
-      RETURNING *
-    )
-    SELECT * FROM person_created, pg_notify('person_created', (SELECT row_to_json(event_created.*) FROM event_created)::text);`,
-    [name]
-  );
-});
+createUsers(db);
 
 setTimeout(() => {
   backgroundTask.stop();
