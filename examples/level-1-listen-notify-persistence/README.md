@@ -70,10 +70,11 @@ Reversing the steps (publishing the event, and then creating the user) would not
 ```js
 async function register(name, email, password) {
   // BAD
-  const event = new UserRegisteredEvent(user?.id, user.name, user.email)
+  const userId = uuid.v4()
+  const event = new UserRegisteredEvent(userId, name, email)
   await publish(event)
 
-  const user = await createUser(name, email, password)
+  const user = await createUser(userId, name, email, password)
   return user
 }
 ```
