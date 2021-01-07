@@ -276,24 +276,25 @@ In other words, we have two event handlers for a single event `UserRegisteredEve
 
 This idea is similar to having a queue of tasks, and processing them individually:
 
-```
-queue = [WelcomeEmailRequestedEvent, ConfirmationEmailRequestedEvent, ...]
+```python
+# PSEUDOCODE
+queue = [WelcomeEmailRequestedEvent, ConfirmationEmailRequestedEvent]
 
-const event = queue.head()
-process(event) // If this fails, retry.
-queue.shift() // Remove upon completion.
+event = queue.head()
+process(event) # If this fails, retry.
+queue.shift() # Remove upon completion.
 ```
 
 As opposed to this:
-```
+```python
+# PSEUDOCODE
 queue = [UserRegisteredEvent]
 
-const event = queue.head()
+event = queue.head()
+sendConfirmationEmail(event) # Will this repeat if the task below failed?
+sendWelcomeEmail(event) # Prone to failure.
 
-sendConfirmationEmail(event) // <- Will this repeat if the task below failed?
-sendWelcomeEmail(event) // Prone to failure.
-
-queue.shift() // Remove upon completion.
+queue.shift() # Two tasks needs to completed for removal. What if we have more?
 ```
 
 
