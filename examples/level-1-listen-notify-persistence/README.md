@@ -386,11 +386,16 @@ async function stream(event) {
       event?.id
       ? 'SELECT * FROM event WHERE id = $1 LIMIT 1 FOR UPDATE NOWAIT' // Only one transaction should operate on the event. Fail when another transaction pick this event.
       : 'SELECT * FROM event LIMIT 1 FOR UPDATE SKIP LOCKED', // In case we want to parellelize the stream operation, this will only select an event that is not selected by another transaction.
-      eventId 
+      event?.id 
       ? [event?.id]
       : [])
     
     const storedEvent = rows[0]
+    if (!storedEvent) {
+      await db.query('COMMIT')
+      return
+    }
+    
     await handle(storedEvent)
 
     await db.query('DELETE FROM event WHERE id = $1', [storedEvent.id])    
