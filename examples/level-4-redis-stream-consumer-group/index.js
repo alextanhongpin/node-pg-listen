@@ -28,7 +28,7 @@ try {
 
 const processEvents = cron.schedule("*/3 * * * * *", () => {
   console.log("running a task every 3 seconds");
-  sendEventToRedisStream();
+  streamToRedis();
 });
 
 const john = createConsumer("john");
@@ -59,6 +59,8 @@ function createConsumer(consumerKey) {
       if (!streams) {
         return;
       }
+      // xreadgroup allows reading from multiple streams, but we only read from
+      // one.
       const [streamName, records] = streams[0];
       checkBacklog = !(records.length === 0);
       console.log("Processing stream", streamName);
@@ -86,7 +88,7 @@ function createConsumer(consumerKey) {
   };
 }
 
-async function sendEventToRedisStream() {
+async function streamToRedis() {
   // Wrap in transaction to prevent same reads...
   try {
     await db.query("BEGIN");
@@ -98,7 +100,8 @@ async function sendEventToRedisStream() {
       try {
         // MAXLEN ~ 1,000,000 caps the stream at roughly that number, so that it
         // doesn't grow in an unbounded way. We might not need this if the stream
-        // is truncated after ack.
+        // is truncated after ack. Another strategy is to create a new stream key
+        // and deleting the old.
         const redisId = await redis.xadd(
           STREAM_KEY, // Stream key.
           "MAXLEN",
@@ -123,6 +126,7 @@ async function sendEventToRedisStream() {
     await db.query("COMMIT");
   } catch (error) {
     await db.query("ROLLBACK");
+    throw error;
   }
 }
 

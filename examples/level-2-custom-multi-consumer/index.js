@@ -9,6 +9,7 @@ import Consumer from "./consumer.js";
 import EventRepository from "./repository/event.js";
 import ConsumerRepository from "./repository/consumer.js";
 import CronBackoff from "./cron.js";
+import createUsers from "../../user-store.js";
 
 try {
   const count = await migrate(db);
@@ -49,24 +50,7 @@ db.on("notification", ({ channel, payload }) => {
 });
 
 await db.query("LISTEN person_created");
-
-"abcdefghijklmnopqrstuvwxyz".split("").forEach(name => {
-  // This works as a transaction, if one of the WITH step fails, all of them
-  // fails.
-  // Perform the insertion of person, event and subsequently returning the
-  // person's data and notifying the event.
-  db.query(
-    `WITH person_created AS (
-      INSERT INTO person(name) VALUES ($1) RETURNING *
-    ),
-    event_created AS (
-      INSERT INTO event (object, event, data) VALUES ('person', 'person_created', (SELECT row_to_json(person_created.*) FROM person_created))
-      RETURNING *
-    )
-    SELECT * FROM person_created, pg_notify('person_created', (SELECT row_to_json(event_created.*) FROM event_created)::text);`,
-    [name]
-  );
-});
+await createUsers();
 
 setTimeout(() => {
   // End background tasks before terminating the database connection.
