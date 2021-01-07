@@ -51,12 +51,10 @@ async function stream(event) {
     await db.query("BEGIN");
     // Take any unprocessed event that has not yet been locked. We can also select multiple.
     const { rows } = await db.query(
-      ...(event?.id
-        ? [
-            "SELECT * FROM event WHERE id = $1 LIMIT 1 FOR UPDATE NOWAIT",
-            [event.id]
-          ]
-        : ["SELECT * FROM event ORDER BY id LIMIT 1 FOR UPDATE SKIP LOCKED"])
+      event?.id
+        ? "SELECT * FROM event WHERE id = $1 LIMIT 1 FOR UPDATE NOWAIT"
+        : "SELECT * FROM event ORDER BY id LIMIT 1 FOR UPDATE SKIP LOCKED",
+      [event?.id]
     );
     const storedEvent = rows?.[0];
     if (!storedEvent) {

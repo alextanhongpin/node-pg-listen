@@ -21,11 +21,11 @@ Surely it's not difficult. All we need is just one `register` function that pers
 // Sends emails immediately after creating the user.
 function register(name, email, password) {
   const user = await createUser(name, email, password)
-  
+
   // BAD
   await sendWelcomeEmail(user)
   await sendConfirmationEmail(user)
-  
+
   return user
 }
 ```
@@ -48,10 +48,10 @@ Here's another variation, but in the context of event-driven design where an eve
 async function register(name, email, password) {
   const user = await createUser(name, email, password)
   const event = new UserRegisteredEvent(user.id, user.name, user.email)
-  
+
   // BAD
-  await publish(event) 
-  
+  await publish(event)
+
   return user
 }
 ```
@@ -72,7 +72,7 @@ async function register(name, email, password) {
   // BAD
   const event = new UserRegisteredEvent(user?.id, user.name, user.email)
   await publish(event)
-  
+
   const user = await createUser(name, email, password)
   return user
 }
@@ -91,15 +91,15 @@ Putting the operation in a transaction, hoping that if the message queue fails, 
 async function register(name, email, password) {
   try {
     await db.query('START')
-     
+
     const user = await createUser(name, email, password)
-    
+
     // BAD
     const event = new UserRegisteredEvent(user.id, user.name, user.email)
     await publish(event) // Event is published
-  
+
     await db.query('COMMIT')
-    
+
     return user
    } catch (error) {
     await db.query('ROLLBACK')
@@ -108,9 +108,10 @@ async function register(name, email, password) {
 }
 ```
 
-Why?
-1. If the event is published successfully, and executes slightly faster before the transaction is commited, then the user might not exists in the database still, causing error.
+It is easy to imagine that the operation above is executed serially, but it is not. This is always a trap especially when dealing with external infrastructure.
+1. If the event is published successfully, and is picked up by a worker before the transaction is commited, the worker might not be able to query the user for processing. Sure, we can retry them, but at the cost of false positive errors.
 2. If the publish takes a long time, the transaction will be open for a long time, slowing performance.
+3. Complexity increases in the scenario where there are more intermediate steps and multiple events to be published.
 
 
 ## The Outbox Pattern
@@ -121,15 +122,15 @@ The Outbox Pattern solves the problem above by persisting the event in the same 
 async function register(name, email, password) {
   try {
     await db.query('START')
-     
+
     const user = await createUser(name, email, password)
-    
-    // Event is persisted in another table. 
+
+    // Event is persisted in another table.
     const event = new UserRegisteredEvent(user.id, user.name, user.email)
     await createEvent(event)
-  
+
     await db.query('COMMIT')
-    
+
     return user
    } catch (error) {
     await db.query('ROLLBACK')
@@ -142,7 +143,7 @@ With this, both operations are atomic - they succeed together, or fail as a whol
 
 
 ```js
-// NOTE: We should only have one of these running at a time. 
+// NOTE: We should only have one of these running at a time.
 // In a multi-node environment, only the leader should execute this function to avoid data race.
 
 async function pool() {
@@ -150,7 +151,7 @@ async function pool() {
     await db.query('START')
     let lastId = 0 // Using serial id.
     const {rows: events} = await db.query('SELECT * FROM event ORDER BY id LIMIT 1000 FOR UPDATE')
-    
+
     for await (let event of events) {
       try {
         // Publish to message queue/background worker.
@@ -158,7 +159,7 @@ async function pool() {
         await publish(event)
         lastId = event.id
       } catch (error) {
-        // Break on error, so that it can be retried later. 
+        // Break on error, so that it can be retried later.
 	// We can also apply exponential backoff to avoid hammering the server.
         break
       }
@@ -208,32 +209,33 @@ CREATE OR REPLACE FUNCTION send_to_outbox() RETURNS TRIGGER AS $$
 DECLARE
 	_channel text;
 	_object text;
-	_event text;
+	_action text;
+	_event event;
 BEGIN
 	_channel = TG_ARGV[0];
 	IF NULLIF(_channel, '') IS NULL THEN
 		RAISE EXCEPTION 'channel cannot be empty';
 	END IF;
-	
-	_object = TG_TABLE_NAME;
-	_event = TG_OP; -- INSERT/UPDATE/DELETE.
-	
-	-- Uncomment to debug.
-	-- RAISE NOTICE 'got % % %', _channel, _object, _event;
 
-	IF (TG_OP = 'DELETE') THEN 
+	_object = TG_TABLE_NAME;
+	_action = TG_OP; -- INSERT/UPDATE/DELETE.
+
+	-- Uncomment to debug.
+	-- RAISE NOTICE 'got % % %', _channel, _object, _action;
+
+	IF (TG_OP = 'DELETE') THEN
 		INSERT INTO event(event, object, data)
-		VALUES (_event, _object, row_to_json(OLD.*));
-		
-		PERFORM pg_notify(_channel, row_to_json(OLD.*)::text);
+		VALUES (_action, _object, row_to_json(OLD.*))
+		RETURNING * INTO _event;
 	ELSIF ((TG_OP = 'UPDATE') OR (TG_OP = 'INSERT')) THEN
 		INSERT INTO event(event, object, data)
-		VALUES (_event, _object, row_to_json(NEW.*));
-		
-		PERFORM pg_notify(_channel, row_to_json(NEW.*)::text);
+		VALUES (_action, _object, row_to_json(NEW.*))
+		RETURNING * INTO _event;
 	END IF;
 
-	RETURN NULL; 
+	PERFORM pg_notify(_channel, row_to_json(_event)::text);
+
+	RETURN NULL;
 END;
 $$ LANGUAGE plpgsql;
 ```
@@ -243,17 +245,24 @@ For each table that we want to attach the trigger to:
 DROP TRIGGER send_to_outbox ON person;
 CREATE TRIGGER send_to_outbox
 AFTER INSERT OR UPDATE OR DELETE ON person
-FOR EACH ROW 
+FOR EACH ROW
 EXECUTE FUNCTION send_to_outbox('person');
 ```
 
 Testing it out:
 ```sql
 LISTEN person;
-UNLISTEN person;
+
+-- Insert.
 INSERT INTO person(name) VALUES ('john');
+
+-- Update.
 UPDATE person SET name = 'alice';
+
+-- Delete.
 DELETE FROM person;
+
+UNLISTEN person;
 ```
 
 
@@ -280,9 +289,9 @@ This idea is similar to having a queue of tasks, and processing them individuall
 # PSEUDOCODE
 queue = [WelcomeEmailRequestedEvent, ConfirmationEmailRequestedEvent]
 
-event = queue.head()
+event = queue.peek() # Get the head.
 process(event) # If this fails, retry.
-queue.shift() # Remove upon completion.
+queue.remove() # Remove head upon completion.
 ```
 
 As opposed to this:
@@ -290,13 +299,12 @@ As opposed to this:
 # PSEUDOCODE
 queue = [UserRegisteredEvent]
 
-event = queue.head()
+event = queue.peek()
 sendConfirmationEmail(event) # Will this repeat if the task below failed?
 sendWelcomeEmail(event) # Prone to failure.
 
-queue.shift() # Two tasks needs to completed for removal. What if we have more?
+queue.remove() # Two tasks needs to completed for removal. What if we have more?
 ```
-
 
 Of course we can cache the steps in between, but caching introduce a few problems:
 
@@ -312,15 +320,15 @@ In other words, the proposed solution would be:
 async function register(name, email, password) {
   try {
     await db.query('START')
-     
+
     const user = await createUser(name, email, password)
-    
-    // Event is persisted in another table. 
+
+    // Event is persisted in another table.
     await createEvent(WelcomeEmailRequestedEvent.fromUser(user))
     await createEvent(ConfirmationEmailRequestedEvent.fromUser(user))
-  
+
     await db.query('COMMIT')
-    
+
     return user
    } catch (error) {
     await db.query('ROLLBACK')
@@ -335,7 +343,7 @@ Above we demonstrated how to perform batch operations by pooling. Alternatively,
 
 The differences are as follow:
 - batch: we perform the operations in bulk. This is usually for processes that does not require real-time delivery.
-- stream: we perform the operation close to real-time, on individual events. 
+- stream: we perform the operation close to real-time, on individual events.
 
 The `pool` function is essentially a `batch` operation:
 ```js
@@ -344,14 +352,14 @@ async function batch() {
     await db.query('START')
     let lastId = 0 // Using serial id.
     const {rows: events} = await db.query('SELECT * FROM event ORDER BY id LIMIT 1000 FOR UPDATE')
-    
+
     for await (let event of events) {
       try {
         // Handle the events.
         await handle(event)
         lastId = event.id
       } catch (error) {
-        // Break on error, so that it can be retried later. 
+        // Break on error, so that it can be retried later.
 	// We can also apply exponential backoff to avoid hammering the server.
         break
       }
@@ -376,29 +384,29 @@ db.on('notification', ({channel, payload}) => {
 
 Our `stream` function handle only a single event at a time, and removing them from the database once completed:
 ```js
-// If an event is specified, process that event by id, else select a row from 
+// If an event is specified, process that event by id, else select a row from
 // the database that is not yet selected by another transaction.
 async function stream(event) {
   try {
     await db.query('BEGIN')
-    
+
     const rows = await db.query(
       event?.id
       ? 'SELECT * FROM event WHERE id = $1 LIMIT 1 FOR UPDATE NOWAIT' // Only one transaction should operate on the event. Fail when another transaction pick this event.
       : 'SELECT * FROM event LIMIT 1 FOR UPDATE SKIP LOCKED', // In case we want to parellelize the stream operation, this will only select an event that is not selected by another transaction.
-      event?.id 
+      event?.id
       ? [event?.id]
       : [])
-    
+
     const storedEvent = rows[0]
     if (!storedEvent) {
       await db.query('COMMIT')
       return
     }
-    
+
     await handle(storedEvent)
 
-    await db.query('DELETE FROM event WHERE id = $1', [storedEvent.id])    
+    await db.query('DELETE FROM event WHERE id = $1', [storedEvent.id])
     await db.query('COMMIT')
   } catch (error) {
     await db.query('ROLLBACK')
