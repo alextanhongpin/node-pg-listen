@@ -18,34 +18,52 @@ await redis.flushall();
 const eventStore = new EventStore(db);
 
 // Create consumer group.
-await redis.xgroup("CREATE", STREAM_KEY, GROUP_KEY, "$", "MKSTREAM");
+try {
+  await redis.xgroup("CREATE", STREAM_KEY, GROUP_KEY, "$", "MKSTREAM");
+} catch (error) {
+  if (error.message.startsWith("BUSYGROUP")) {
+    console.log("consumer name already exists");
+  } else {
+    throw error;
+  }
+}
 
 const processEvents = cron.schedule("*/3 * * * * *", () => {
   console.log("running a task every 3 seconds");
   sendEventToRedisStream();
 });
 
+const john = createConsumer("john");
+const alice = createConsumer("alice");
 const consumeRedis = cron.schedule("*/3 * * * * *", () => {
   // Jobs will be distributed between john and alice.
-  redisConsumerGroup("john");
-  redisConsumerGroup("alice");
+  john();
+  alice();
 });
 
-async function redisConsumerGroup(consumerKey) {
-  try {
-    const streams = await redis.xreadgroup(
-      "GROUP",
-      GROUP_KEY,
-      consumerKey,
-      "COUNT",
-      10,
-      "STREAMS",
-      STREAM_KEY,
-      ">"
-    );
-    if (!streams) return;
-    streams.forEach(stream => {
-      const [streamName, records] = stream;
+function createConsumer(consumerKey) {
+  let checkBacklog = true;
+  return async () => {
+    try {
+      // When we recover from crash, process pending messages. Else, listen to new ones.
+      let startId = checkBacklog ? 0 : ">";
+      console.log("startId", checkBacklog, startId);
+      const streams = await redis.xreadgroup(
+        "GROUP",
+        GROUP_KEY,
+        consumerKey,
+        "COUNT",
+        10,
+        "STREAMS",
+        STREAM_KEY,
+        startId
+      );
+      if (!streams) {
+        return;
+      }
+      const [streamName, records] = streams[0];
+      checkBacklog = !(records.length === 0);
+      console.log("received from stream", { streamName });
       records.forEach(async record => {
         const [redisId, fields] = record;
         const event = {};
@@ -64,10 +82,10 @@ async function redisConsumerGroup(consumerKey) {
         const ack = await redis.xack(STREAM_KEY, GROUP_KEY, redisId);
         console.log(ack);
       });
-    });
-  } catch (error) {
-    console.log(error);
-  }
+    } catch (error) {
+      console.log(error);
+    }
+  };
 }
 
 async function sendEventToRedisStream() {
@@ -77,7 +95,7 @@ async function sendEventToRedisStream() {
   for (let event of events) {
     try {
       // MAXLEN ~ 1,000,000 caps the stream at roughly that number, so that it
-      // doesn't grow in an unbounded way. We might not need this if the stream 
+      // doesn't grow in an unbounded way. We might not need this if the stream
       // is truncated after ack.
       const redisId = await redis.xadd(
         STREAM_KEY, // Stream key.
