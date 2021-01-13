@@ -268,7 +268,7 @@ UNLISTEN person;
 
 
 However, it is not as flexible as performing the creation of event in the transaction due to the following reasons:
-1. (Primary reason) We can't be granular with the event type, and representing event as CRUD (`UserCreated`, `UserUpdated`, `UserDeleted`) makes it hard when it comes to handling the event processing later.
+1. (Primary reason) We can't be granular with the event type, and representing event as CRUD (`UserCreated`, `UserUpdated`, `UserDeleted`) makes it hard when it comes to handling the event processing later. Update, see [here](#trigger-revisited).
 2. Triggers are less visible, compared to writing application code. Not all developers have access to write triggers too in certain environment.
 3. We now need to maintain triggers (adding, deleting etc) for multiple table (it's not maintainable).
 4. The trigger assumes the event created is tied to the existing table, but it might not always be true. Say if we created an `Order` and wanted to send a user an email, but the event requires data from multiple table, then we will have to query it later, at the risk of data changes. If would be safer to persist all those information as an event to be processed in the first place.
@@ -335,6 +335,138 @@ async function register(name, email, password) {
     await db.query('ROLLBACK')
     throw error
    }
+}
+```
+
+## Update
+
+Above, we mentioned that creating granular events are the way to go. But we are actually mixing the messages responsibility - commands and events. The email delivery are actually `commands`, and they can be derived from `events` too. Let's try to be more specific with the example. Here the `register` method now produce an event:
+
+```js
+async function register(name, email, password) {
+  try {
+    await db.query('START')
+
+    const user = await createUser(name, email, password)
+    await createEvent(UserRegisteredEvent(user.id, user.name, user.email))
+
+    await db.query('COMMIT')
+
+    return user
+   } catch (error) {
+    await db.query('ROLLBACK')
+    throw error
+   }
+}
+```
+
+Then we have a `pool` method that will continuously query the `event` table:
+
+```js
+async function poolEvents() {
+  try {
+    await db.query('BEGIN')
+    const events = await db.query(`
+		SELECT * 
+		FROM event
+		ORDER BY id
+		LIMIT 100
+		FOR UPDATE`
+    }
+    let lastId = -1
+    for (let event of events) {
+      switch (event.type) {
+        lastId = event.id
+        case 'USER_REGISTERED':
+          await db.query(`
+				INSERT INTO command (object, action, payload)
+				VALUES 
+					($1, $3, $2),
+					($1, $4, $2)
+			`, [event.object, event.payload, 'SEND_WELCOME_EMAIL', 'SEND_REGISTRATION_EMAIL'])
+          break
+        default:
+          throw new Error(`not implemented: ${event.type}`)
+      }
+    }
+    await db.query('DELETE FROM event WHERE id <= $1', [lastId])
+    await db.query('COMMIT')
+  } catch (error) {
+    await db.query('ROLLBACK')
+  }
+}
+```
+
+Now the events will be processed by creating two commands in the same transaction, guaranteeing atomicity! We can then create another background task to pool the commands, similar to what we have done with the events.
+
+```js
+async function poolCommands() {
+  try {
+    await db.query('BEGIN')
+    const commands = await db.query(`
+		SELECT * 
+		FROM command
+		ORDER BY id
+		LIMIT 100
+		FOR UPDATE`
+    }
+    let lastId = -1
+    for (let command of commands) {
+      switch (command.type) {
+        lastId = command.id
+        case 'SEND_WELCOME_EMAIL':
+          // Send email...
+          break
+        case 'SEND_REGISTRATION_EMAIL':
+          // Send email...
+          break
+        default:
+          throw new Error(`not implemented: ${command.type}`)
+      }
+    }
+    await db.query('DELETE FROM command WHERE id <= $1', [lastId])
+    await db.query('COMMIT')
+  } catch (error) {
+    await db.query('ROLLBACK')
+  }
+}
+```
+
+The delivery is then guaranteed.
+
+## Non-pooling approach
+
+In the examples above, we pool the `event` table to check for events to be processed. At times, we want to directly process them in the handler itself, and avoid duplicate jobs when the event is handled successfully. This pattern also works if the method is triggered by another client that wishes for the payload, but upon triggering, the event will also be sent to the same client to process the same task, which is redundant. That is the case with Saga Orchestration. E.g.
+
+1. Saga Orchestrator fires a HTTP Post to Payment Service's `/payments` to create payment
+2. Saga Orchestrator receives the response and mark it as done
+3. Payment Service however sends the event to the Saga Orchestrator's queue.
+4. Saga Orchestrator receives the same event
+
+If we know that the event does not need to be persisted after the call is done, we can just delete it immediately after the transaction ends. In case that fails, it will always be picked up by the pooler and send to the service that needs it as Event Notification.
+```js
+async function createPayment(params) {
+  let payment, event
+  try {
+    await db.query('BEGIN')
+    payment = await createPayment(db, params)
+    event = await createEvent(db, new PaymentCreatedEvent(payment))
+    await db.query('COMMIT')
+  } catch (error) {
+    await db.query('ROLLBACK')
+  }
+  
+  try {
+    await db.query('BEGIN')
+    // Potentially use something like NATS request/reply.
+    await publish(event)
+    await db.query('DELETE FROM event WHERE id = $1', [event.id])
+  	await db.query('COMMIT')
+  } catch (error) {
+    await db.query('ROLLBACK')
+  }
+  
+  return payment
 }
 ```
 
@@ -430,4 +562,37 @@ async function batchStream(n = 10) {
     await stream()
   }
 }
+```
+
+## Trigger Revisited
+
+Earlier I mentioned that granularity of the event name is the reason why we are not using trigger. We can easily make it granular, by adding the event name into the entity that we are updating. So a `person` table will look like this:
+
+```sql
+CREATE TABLE IF NOT EXIST person (
+	id uuid DEFAULT gen_random_uuid(),
+	-- REDACTED
+	event text NOT NULL DEFAULT 'PERSON_CREATED',
+	
+	PRIMARY KEY (id)
+)
+```
+
+The `event` column can can be an `enum` too. In other words, for every operation on the `person` row, we update the event name. With this, the trigger is able to pick up the event name.
+
+## Outbox Table
+
+In the above example, we name our table `event`. We can also stick with the convention `outbox` if needed, or adapt to the structure of the domain event table:
+
+```sql
+CREATE TABLE IF NOT EXISTS event (
+	id bigint GENERATED ALWAYS AS IDENTITY,
+	
+	aggregate_id uuid NOT NULL,
+	aggregate_type text NOT NULL,
+	action text NOT NULL,
+	data jsonb NOT NULL DEFAULT '{}',
+	
+	PRIMARY KEY (id)
+);
 ```
